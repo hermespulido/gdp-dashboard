@@ -1,151 +1,122 @@
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
+import numpy as np
+import plotly.express as px
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+# ---------------------------
+# PAGE CONFIG
+# ---------------------------
+st.set_page_config(page_title="AI Usage Dashboard", layout="wide")
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+# Dark theme styling
+st.markdown("""
+    <style>
+    body { background-color: #0E1117; color: white; }
+    .stApp { background-color: #0E1117; }
+    </style>
+""", unsafe_allow_html=True)
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+# ---------------------------
+# GENERATE SAMPLE DATA
+# ---------------------------
+np.random.seed(42)
+dates = pd.date_range(start="2023-01-01", periods=365)
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+models = ["GPT-4", "Claude", "Gemini", "Llama"]
+industries = ["Finance", "Healthcare", "Retail", "Education", "Tech"]
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+data = pd.DataFrame({
+    "date": np.random.choice(dates, 1000),
+    "model": np.random.choice(models, 1000),
+    "industry": np.random.choice(industries, 1000),
+    "users": np.random.randint(50, 1000, 1000),
+    "cost": np.random.uniform(100, 10000, 1000),
+    "requests": np.random.randint(100, 5000, 1000)
+})
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
+# ---------------------------
+# SIDEBAR FILTERS
+# ---------------------------
+st.sidebar.header("Filters")
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+selected_model = st.sidebar.multiselect("Select Model", data["model"].unique(), default=data["model"].unique())
+selected_industry = st.sidebar.multiselect("Select Industry", data["industry"].unique(), default=data["industry"].unique())
 
-    return gdp_df
+date_range = st.sidebar.date_input("Select Date Range", [data["date"].min(), data["date"].max()])
 
-gdp_df = get_gdp_data()
-
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
-
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
+# Filter data
+filtered_df = data[
+    (data["model"].isin(selected_model)) &
+    (data["industry"].isin(selected_industry)) &
+    (data["date"] >= pd.to_datetime(date_range[0])) &
+    (data["date"] <= pd.to_datetime(date_range[1]))
 ]
 
-st.header('GDP over time', divider='gray')
+# ---------------------------
+# KPI SCORECARDS
+# ---------------------------
+st.title("AI Usage Analytics Dashboard")
 
-''
+col1, col2, col3, col4 = st.columns(4)
 
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
+col1.metric("Total Users", f"{filtered_df['users'].sum():,}")
+col2.metric("Total Requests", f"{filtered_df['requests'].sum():,}")
+col3.metric("Total Cost ($)", f"${filtered_df['cost'].sum():,.0f}")
+col4.metric("Avg Cost per Request", f"${(filtered_df['cost'].sum() / filtered_df['requests'].sum()):.2f}")
 
-''
-''
+# ---------------------------
+# CHARTS
+# ---------------------------
 
+# Trend over time
+trend = filtered_df.groupby("date").agg({"users": "sum", "requests": "sum"}).reset_index()
 
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
+fig_trend = px.line(trend, x="date", y=["users", "requests"], title="Usage Trends")
+st.plotly_chart(fig_trend, use_container_width=True)
 
-st.header(f'GDP in {to_year}', divider='gray')
+# Usage by model
+model_usage = filtered_df.groupby("model")["requests"].sum().reset_index()
+fig_model = px.bar(model_usage, x="model", y="requests", title="Requests by Model")
+st.plotly_chart(fig_model, use_container_width=True)
 
-''
+# Cost by industry
+cost_industry = filtered_df.groupby("industry")["cost"].sum().reset_index()
+fig_cost = px.pie(cost_industry, names="industry", values="cost", title="Cost Distribution by Industry")
+st.plotly_chart(fig_cost, use_container_width=True)
 
-cols = st.columns(4)
+# ---------------------------
+# PIVOT TABLE
+# ---------------------------
+st.subheader("Pivot Table")
 
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
+pivot = pd.pivot_table(filtered_df,
+                       values="requests",
+                       index="industry",
+                       columns="model",
+                       aggfunc="sum",
+                       fill_value=0)
 
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
+st.dataframe(pivot, use_container_width=True)
 
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
+# ---------------------------
+# DATA TABLE
+# ---------------------------
+st.subheader("Raw Data")
+st.dataframe(filtered_df, use_container_width=True)
 
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+# ---------------------------
+# INSIGHTS SECTION
+# ---------------------------
+st.subheader("Insights")
+
+if not filtered_df.empty:
+    top_model = model_usage.sort_values(by="requests", ascending=False).iloc[0]["model"]
+    top_industry = cost_industry.sort_values(by="cost", ascending=False).iloc[0]["industry"]
+
+    st.write(f"- Top performing model: **{top_model}**")
+    st.write(f"- Highest spending industry: **{top_industry}**")
+    st.write("- AI adoption is increasing over time based on request trends.")
+else:
+    st.write("No data available for selected filters.")
+
